@@ -68,25 +68,33 @@ class RouteDetails(BaseRoute):
       return self.jsonify({'display' : self.displaymgr.isEnabled()})
     elif about == 'network':
       return self.jsonify({'network' : helper.hasNetwork()})
-    elif about == 'hardware':
+    elif about == 'hardware':   # If needed for x86 check https://github.com/erpalma/throttled for source
       output = ''
-      try:
-        output = subprocess.check_output(['/opt/vc/bin/vcgencmd', 'get_throttled'], stderr=self.void)
-      except:
-        logging.exception('Unable to execute /opt/vc/bin/vcgencmd')
-      if not output.startswith('throttled='):
-        logging.error('Output from vcgencmd get_throttled has changed')
-        output = 'throttled=0x0'
-      try:
-        h = int(output[10:].strip(), 16)
-      except:
-        logging.exception('Unable to convert output from vcgencmd get_throttled')
-      result = {
-        'undervoltage' : h & (1 << 0 | 1 << 16) > 0,
-        'frequency': h & (1 << 1 | 1 << 17) > 0,
-        'throttling' : h & (1 << 2 | 1 << 18) > 0,
-        'temperature' : h & (1 << 3 | 1 << 19) > 0
-      }
+      if os.path.exists('/opt/vc/bin/vcgencmd'):
+        try:
+          output = subprocess.check_output(['/opt/vc/bin/vcgencmd', 'get_throttled'], stderr=self.void)
+        except:
+          logging.exception('Unable to execute /opt/vc/bin/vcgencmd')
+        if not output.startswith('throttled='):
+          logging.error('Output from vcgencmd get_throttled has changed')
+          output = 'throttled=0x0'
+        try:
+          h = int(output[10:].strip(), 16)
+        except:
+          logging.exception('Unable to convert output from vcgencmd get_throttled')
+        result = {
+          'undervoltage' : h & (1 << 0 | 1 << 16) > 0,
+          'frequency': h & (1 << 1 | 1 << 17) > 0,
+          'throttling' : h & (1 << 2 | 1 << 18) > 0,
+          'temperature' : h & (1 << 3 | 1 << 19) > 0
+        }
+      else:
+        result = {
+          'undervoltage' : 0,
+          'frequency': 0,
+          'throttling' : 0,
+          'temperature' : 0
+        }
       return self.jsonify(result)
     elif about == 'messages':
       # This should be made more general purpose since other parts need similar service
