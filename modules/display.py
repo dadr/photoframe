@@ -93,17 +93,19 @@ class display:
 
     return (self.width, self.height, self.params)
 
-  def getDevice(self):
+  def getDevice(self):  # Note: will return emulated device
     if self.params and self.params.split(' ')[0] == 'INTERNAL':
       device = '/dev/fb' + self.params.split(' ')[1]
       if os.path.exists(device):
         return device
+    elif self.emulate:
+      return '/tmp/fb.bin'
     return '/dev/fb0'
 
-  def isHDMI(self):
+  def isHDMI(self):   # Modified to return "" for no, and Connector for Yes
     return self.getDevice() == '/dev/fb0' and not display._isDPI()
 
-  def get(self):
+  def get(self):  # Get image scaled for display
     if self.enabled:
       args = [
               'convert',
@@ -114,7 +116,7 @@ class display:
               '%s:-' % (self.format),
               'jpg:-'
       ]
-    else:
+    else:   # If display is not enabled, create a thumbnail to say so for the Configuration web page
       args = [
         'convert',
         '-size',
@@ -135,12 +137,10 @@ class display:
         'jpg:-'
       ]
 
-    if not self.enabled:
+    if not self.enabled:  # Return Display Off thumbnail
       result = debug.subprocess_check_output(args, stderr=self.void)
     elif self.depth in [24, 32]:
       device = self.getDevice()
-      if self.emulate:
-        device = '/tmp/fb.bin'
       with open(device, 'rb') as fb:
         pip = subprocess.Popen(args, stdin=fb, stdout=subprocess.PIPE, stderr=self.void)
         result = pip.communicate()[0]
@@ -156,10 +156,7 @@ class display:
 
   def _to_display(self, arguments):
     device = self.getDevice()
-    if self.emulate:
-      device = '/tmp/fb.bin'
-      self.depth = 32
-
+    
     if self.depth in [24, 32]:
       with open(device, 'wb') as f:
         debug.subprocess_call(arguments, stdout=f, stderr=self.void)
@@ -241,7 +238,7 @@ class display:
     ]
     self._to_display(args)
 
-  def enable(self, enable, force=False):
+  def enable(self, enable, force=False):   # Turn Display on or off
     if enable == self.enabled and not force:
       return
 
@@ -254,22 +251,36 @@ class display:
         if force: # Make sure display is ON and set to our preference
           if os.path.exists('/opt/vc/bin/tvservice'):
             debug.subprocess_call(['/opt/vc/bin/tvservice', '-e', self.params], stderr=self.void, stdout=self.void)
+          else:
+              f=open('/sys/class/graphics/fb0/blank', 'w')
+              f.write('0\n')
+              f.close
           time.sleep(1)
           debug.subprocess_call(['/bin/fbset', '-fb', self.getDevice(), '-depth', '8'], stderr=self.void)
           debug.subprocess_call(['/bin/fbset', '-fb', self.getDevice(), '-depth', str(self.depth), '-xres', str(self.width), '-yres', str(self.height), '-vxres', str(self.width), '-vyres', str(self.height)], stderr=self.void)
         else:
-          debug.subprocess_call(['/usr/bin/vcgencmd', 'display_power', '1'], stderr=self.void)
+          if os.path.exists('/usr/bin/vcgencmd'):
+              debug.subprocess_call(['/usr/bin/vcgencmd', 'display_power', '1'], stderr=self.void)
+          else:
+              f=open('/sys/class/graphics/fb0/blank', 'w')
+              f.write('0\n')
+              f.close
     else:
       self.clear()
       if self.isHDMI():
-        debug.subprocess_call(['/usr/bin/vcgencmd', 'display_power', '0'], stderr=self.void)
+        if os.path.exists('/usr/bin/vcgencmd'):
+            debug.subprocess_call(['/usr/bin/vcgencmd', 'display_power', '0'], stderr=self.void)
+        else:
+            f=open('/sys/class/graphics/fb0/blank', 'w')
+            f.write('1\n')
+            f.close
     self.enabled = enable
 
   def isEnabled(self):
     return self.enabled
 
   def clear(self):
-    if self.emulate:
+    if self.emulate:   # Needed because cat-ing /dev/zero to a file is a quick way to fill disk
       self.message('')
       return
     with open(self.getDevice(), 'wb') as f:
@@ -326,57 +337,98 @@ class display:
 
   def current(self):
     result = None
-    if self.isHDMI() and os.path.exists('/opt/vc/bin/tvservice'):
-      output = debug.subprocess_check_output(['/opt/vc/bin/tvservice', '-s'], stderr=subprocess.STDOUT)
-      # state 0x120006 [DVI DMT (82) RGB full 16:9], 1920x1080 @ 60.00Hz, progressive
-      m = re.search('state 0x[0-9a-f]* \[([A-Z]*) ([A-Z]*) \(([0-9]*)\) [^,]*, ([0-9]*)x([0-9]*) \@ ([0-9]*)\.[0-9]*Hz, (.)', output)
-      if m is None:
-        return None
-      result = {
-        'mode' : m.group(2),
-        'code' : int(m.group(3)),
-        'width' : int(m.group(4)),
-        'height' : int(m.group(5)),
-        'rate' : int(m.group(6)),
-        'aspect_ratio' : '',
-        'scan' : m.group(7),
-        '3d_modes' : [],
-        'depth':32,
-        'reverse':True,
-      }
+    if display._isDPI():
+        result = display._internaldisplay()
+    elif os.path.exists('/opt/vc/bin/tvservice'):
+        output = debug.subprocess_check_output(['/opt/vc/bin/tvservice', '-s'], stderr=subprocess.STDOUT)
+        # state 0x120006 [DVI DMT (82) RGB full 16:9], 1920x1080 @ 60.00Hz, progressive
+        m = re.search('state 0x[0-9a-f]* \[([A-Z]*) ([A-Z]*) \(([0-9]*)\) [^,]*, ([0-9]*)x([0-9]*) \@ ([0-9]*)\.[0-9]*Hz, (.)', output)
+        if m is None:
+            return None
+        result = {
+            'mode' : m.group(2),
+            'code' : int(m.group(3)),
+            'width' : int(m.group(4)),
+            'height' : int(m.group(5)),
+            'rate' : int(m.group(6)),
+            'aspect_ratio' : '',
+            'scan' : m.group(7),
+            '3d_modes' : [],
+            'depth':32,
+            'reverse':True,
+        }
+        logging.debug('RPi HDMI display: ' + repr(result))
     else:
-      result = display._internaldisplay()
-
+        result = {
+        'mode' : '',
+        'code' : None,
+        'width' : 0,
+        'height' : 0,
+        'rate' : 60,
+        'aspect_ratio' : '',
+        'scan' : 'progressive',
+        '3d_modes' : [],
+        'reverse' : True
+        }
+        info = debug.subprocess_check_output(['/bin/fbset'], stderr=subprocess.STDOUT)
+        for line in info.split('\n'):
+        line = line.strip()
+        if line.startswith('mode'):
+            result['mode'] = line[6:-1]
+        if line.startswith('geometry'):
+            parts = line.split(' ')
+            result['width'] = int(parts[1])
+            result['height'] = int(parts[2])
+            result['depth'] = int(parts[5])
+            #result['code'] = int(device[-1])   # Don't understand this - just checking for fb0 or fb1?
+        logging.debug('PC display: ' + repr(result))
     return result
 
   @staticmethod
   def available():
-    if os.path.exists('/opt/vc/bin/tvservice'):
-      cea = json.loads(debug.subprocess_check_output(['/opt/vc/bin/tvservice', '-j', '-m', 'CEA'], stderr=subprocess.STDOUT))
-      dmt = json.loads(debug.subprocess_check_output(['/opt/vc/bin/tvservice', '-j', '-m', 'DMT'], stderr=subprocess.STDOUT))
-    else:
-      logging.error('/opt/vc/bin/tvservice is missing! No HDMI resolutions will be available')
-      cea = []
-      dmt = []
-    result = []
-    for entry in cea:
-      entry['mode'] = 'CEA'
-      entry['depth'] = 32
-      entry['reverse'] = True
-      result.append(entry)
-    for entry in dmt:
-      entry['mode'] = 'DMT'
-      entry['depth'] = 32
-      entry['reverse'] = True
-      result.append(entry)
+      result = []
+      internal = display._internaldisplay()
+      if internal:
+          logging.info('Internal display detected')
+          result.append(internal)
+      if os.path.exists('/opt/vc/bin/tvservice'):  # Get Modes for RPi HDMI
+          cea = json.loads(debug.subprocess_check_output(['/opt/vc/bin/tvservice', '-j', '-m', 'CEA'], stderr=subprocess.STDOUT))
+          dmt = json.loads(debug.subprocess_check_output(['/opt/vc/bin/tvservice', '-j', '-m', 'DMT'], stderr=subprocess.STDOUT))
+      result = []
+      for entry in cea:
+          entry['mode'] = 'CEA'
+          entry['depth'] = 32
+          entry['reverse'] = True
+          result.append(entry)
+      for entry in dmt:
+          entry['mode'] = 'DMT'
+          entry['depth'] = 32
+          entry['reverse'] = True
+          result.append(entry)
 
-    internal = display._internaldisplay()
-    if internal:
-      logging.info('Internal display detected')
-      result.append(internal)
+      ## Pick Up here with figuring out how to get valid modes detected
+      elif:  # Get Modes for PC
+          entry wants
+          currentmode = current(display)
+          result.append(currentmode)
+       
 
-    # Finally, sort by pixelcount
-    return sorted(result, key=lambda k: k['width']*k['height'])
+         result = {
+         'mode' : '',
+         'code' : None,
+         'width' : 0,
+         'height' : 0,
+         'rate' : 60,
+         'aspect_ratio' : '',
+         'scan' : 'progressive',
+         '3d_modes' : [],
+         'reverse' : True
+         }
+        
+    
+
+      # Finally, dedupe and sort by pixelcount
+      return sorted(set(result), key=lambda k: k['width']*k['height'])
 
   @staticmethod
   def validate(tvservice, special):
