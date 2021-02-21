@@ -102,8 +102,12 @@ class display:
       return '/tmp/fb.bin'
     return '/dev/fb0'
 
-  def isHDMI(self):   # Modified to return "" for no, and Connector for Yes
-    return self.getDevice() == '/dev/fb0' and not display._isDPI()
+  def isHDMI(self):   # Modified to return '' for no, and Connector for Yes
+    result = not display._is DPI()
+    if not os.path.exists('/opt/vc/bin/tvservice') and os.path.exists('/sys/class/drm/card0'):
+      #  follow /sys/class/graphics to find the driver card and connector for fb0
+      card =  glob.glob('/sys/class/graphics/fb0/device/drm/card?')
+    return result
 
   def get(self):  # Get image scaled for display
     if self.enabled:
@@ -335,7 +339,8 @@ class display:
         return entry
     return None
 
-  def current(self):
+  @staticmethod
+  def current():   # This function used to take self, but I think it no longer needs it.
     result = None
     if display._isDPI():
         result = display._internaldisplay()
@@ -372,16 +377,16 @@ class display:
         }
         info = debug.subprocess_check_output(['/bin/fbset'], stderr=subprocess.STDOUT)
         for line in info.split('\n'):
-        line = line.strip()
-        if line.startswith('mode'):
-            result['mode'] = line[6:-1]
-        if line.startswith('geometry'):
-            parts = line.split(' ')
-            result['width'] = int(parts[1])
-            result['height'] = int(parts[2])
-            result['depth'] = int(parts[5])
-            #result['code'] = int(device[-1])   # Don't understand this - just checking for fb0 or fb1?
-        logging.debug('PC display: ' + repr(result))
+            line = line.strip()
+            if line.startswith('mode'):
+                result['mode'] = line[6:-1]
+            if line.startswith('geometry'):
+                parts = line.split(' ')
+                result['width'] = int(parts[1])
+                result['height'] = int(parts[2])
+                result['depth'] = int(parts[5])
+                #result['code'] = int(device[-1])   # Don't understand this - just checking for fb0 or fb1?
+        logging.debug('PC displaymode: ' + repr(result))
     return result
 
   @staticmethod
@@ -391,7 +396,7 @@ class display:
       if internal:
           logging.info('Internal display detected')
           result.append(internal)
-      if os.path.exists('/opt/vc/bin/tvservice'):  # Get Modes for RPi HDMI
+      elif os.path.exists('/opt/vc/bin/tvservice'):  # Get Modes for RPi HDMI
           cea = json.loads(debug.subprocess_check_output(['/opt/vc/bin/tvservice', '-j', '-m', 'CEA'], stderr=subprocess.STDOUT))
           dmt = json.loads(debug.subprocess_check_output(['/opt/vc/bin/tvservice', '-j', '-m', 'DMT'], stderr=subprocess.STDOUT))
       result = []
@@ -405,30 +410,27 @@ class display:
           entry['depth'] = 32
           entry['reverse'] = True
           result.append(entry)
-
-      ## Pick Up here with figuring out how to get valid modes detected
-      elif:  # Get Modes for PC
-          entry wants
-          currentmode = current(display)
-          result.append(currentmode)
-       
-
-         result = {
-         'mode' : '',
-         'code' : None,
-         'width' : 0,
-         'height' : 0,
-         'rate' : 60,
-         'aspect_ratio' : '',
-         'scan' : 'progressive',
-         '3d_modes' : [],
-         'reverse' : True
-         }
-        
-    
-
-      # Finally, dedupe and sort by pixelcount
-      return sorted(set(result), key=lambda k: k['width']*k['height'])
+      elif os.path.exists('usr/sbin/hwinfo'):  # Get Modes for PC.
+          info = debug.subprocess_check_output(['/usr/sbin/hwinfo --monitor'], stderr=subprocess.STDOUT)
+          for line in info.split('\n'):
+              line = line.strip()
+              if line.startswith('  Model'):
+                  model = line[10:-1]
+                  logging.info('PC display detected:' repr(model))
+              if line.startswith('  Resolution:'):
+                  m = re.search('  Resolution: ([0-9]*)x([0-9]*)\@([0-9]*)Hz', line)
+                  entry['mode'] = 'PC'
+                  entry['code'] = None
+                  entry['width'] = m.group(1)
+                  entry['height'] = m.group(2)
+                  entry['rate'] = m.group(3)
+                  entry['aspect_ratio'] = ''
+                  entry['scan'] = 'progressive'
+                  entry['3d_modes'] = []
+                  entry['reverse'] = True
+                  result.append(entry)
+      # Finally, dedupe and sort by pixelcount - reversed so highest rez leads, and becomes default for validate
+      return sorted(set(result), key=lambda k: k['width']*k['height']*k['rate'], reverse=True)
 
   @staticmethod
   def validate(tvservice, special):
