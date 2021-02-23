@@ -427,6 +427,7 @@ class display:
                   entry['aspect_ratio'] = ''
                   entry['scan'] = 'progressive'
                   entry['3d_modes'] = []
+                  entry['depth'] = 32
                   entry['reverse'] = True
                   result.append(entry)
       # Finally, dedupe and sort by pixelcount - reversed so highest rez leads, and becomes default for validate
