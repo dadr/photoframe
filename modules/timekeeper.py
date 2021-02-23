@@ -13,9 +13,14 @@
 # You should have received a copy of the GNU General Public License
 # along with photoframe.  If not, see <http://www.gnu.org/licenses/>.
 #
+# PC plaform will try to sleep during scheduled power saving interval
+# - but not during low lux screen-off state.
+#
 import logging
 from threading import Thread
 import time
+import os
+import debug
 
 # Start timer for keeping display on/off
 class timekeeper(Thread):
@@ -73,7 +78,18 @@ class timekeeper(Thread):
 		self.luxHigh = None
 		self.ambientOff = False
 
-	def getDisplayOn(self):
+    @staticmethod
+    def canSleep():
+        if os.path.exists('/sys/power/state') and os.path.exists('/usr/sbin/rtcwake'):
+            statefile=open('/sys/power/state', 'r')
+            powerstates=statefile.readline(255)
+            statefile.close()
+            if 'mem' in powerstates:
+                return(True)
+        else:
+            return(False)
+ 
+    def getDisplayOn(self):
 		return not self.standby
 
 	def sensorListener(self, temperature, lux):
@@ -116,7 +132,7 @@ class timekeeper(Thread):
 		self.scheduleOff = False
 		while True:
 			time.sleep(60) # every minute
-			if self.hourOn is not None and self.hourOff is not None:
+			if self.hourOn is not None and self.hourOff is not None and (self.hourOn != self.hourOff):
 				if self.hourOn > self.hourOff:
 					stateBegin = self.hourOff
 					stateEnd = self.hourOn
@@ -128,11 +144,17 @@ class timekeeper(Thread):
 
 				previouslyOff = self.scheduleOff
 				hour = int(time.strftime('%H'))
-				if hour >= stateBegin and hour < stateEnd:
+                if hour >= stateBegin and hour < stateEnd:
 					self.scheduleOff = stateMode
 				else:
 					self.scheduleOff = not stateMode
 
-				if self.scheduleOff != previouslyOff:
+                if self.scheduleOff and canSleep():
+                    minutesafter = int(time.strftime('%M'))
+                    sleepseconds = 60 * ( 60 * (((stateEnd - hour + 24) % 24) - minutesafter))
+                    logging.debug('Schedule has triggered change in power, sleep PC until %s' % repr(stateEnd))
+                    debug.subprocess_call('/usr/sbin/rtcwake -m mem -s ', str(sleepseconds))
+
+                elif self.scheduleOff != previouslyOff:
 					logging.debug('Schedule has triggered change in power, standby is now %s' % repr(self.scheduleOff))
 					self.evaluatePower()
