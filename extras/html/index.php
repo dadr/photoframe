@@ -62,7 +62,7 @@ if (isset($_GET["register"])) {
                 else
                         $valid = FALSE;
                 if ($valid)
-                        header(sprintf("Location: http://%d.%d.%d.%d:7777/callback?state=%s&code=%s",
+                        header(sprintf("Location: http://%d.%d.%d.%d/callback?state=%s&code=%s",
                         $dest[0], $dest[1], $dest[2], $dest[3],
                         $_GET["state"],
                         $_GET["code"]
